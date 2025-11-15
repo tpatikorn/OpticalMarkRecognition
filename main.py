@@ -30,9 +30,11 @@ sheet_template = AnswerSheetTemplate(
                  span_type="choose_one", answer_keys=[_i % 6 for _i in range(30)]),
         CellSpan((20, 18), (49, 23), False,
                  span_type="choose_any",
-                 answer_keys=[[_i % 6, (_i + 1) % 6, (_i + 2) % 6] for _i in range(30)]),
+                 answer_keys=[[_i % 6, (_i + 1) % 6, (_i + 4) % 6] for _i in range(30)]),
         CellSpan((20, 26), (49, 31), False,
-                 span_type="choose_one", answer_keys = [_i % 6 for _i in range(30)])])
+                 span_type="choose_one", answer_keys = [_i % 6 for _i in range(30)])],
+    correct_score=1,
+    incorrect_score=-0.2)
 
 for image_filename in os.listdir(pages_folder):
     sheet_img = AnswerSheet(
@@ -52,3 +54,4 @@ visualize_float_grid(os.path.join(DEBUG_OUTPUT_DIR, f"page_1_aligned.png"),
 result_file = "debug_output/page_grid_output.png"
 print(result_0.student_id)
 print(result_0.all_answers)
+print(result_0.all_scores)

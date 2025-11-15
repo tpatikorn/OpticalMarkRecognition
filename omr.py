@@ -1,5 +1,5 @@
 import os
-from typing import Union, List, Tuple, Literal
+from typing import Union, List, Tuple, Literal, Any
 
 import cv2
 import numpy as np
@@ -65,11 +65,15 @@ class AnswerSheetTemplate:
                  grid_rows: int,
                  grid_cols: int,
                  id_span: CellSpan,
-                 answer_spans: List[CellSpan]):
+                 answer_spans: List[CellSpan],
+                 correct_score: float = 1,
+                 incorrect_score: float = 0):
         self.grid_rows = grid_rows
         self.grid_cols = grid_cols
         self.id_span = id_span
         self.answer_spans = answer_spans
+        self.max_score = correct_score
+        self.incorrect_score = incorrect_score
 
 
 class AnswerSheet(AnswerSheetTemplate):
@@ -98,6 +102,7 @@ class AnswerSheet(AnswerSheetTemplate):
         # ultra processed stuff
         self.student_id = None
         self.all_answers = []
+        self.all_scores = 0
         self.process()
 
     def process(self):
@@ -259,11 +264,12 @@ class AnswerSheet(AnswerSheetTemplate):
 
         return float_grid
 
-    def extract_argmax(self, span: CellSpan) -> List[int]:
+    def extract_argmax(self, span: CellSpan) -> tuple[List[int], int]:
         values = self.float_grid[span.top_left[0]: span.bot_right[0] + 1, span.top_left[1]: span.bot_right[1] + 1]
         # find the indices of True and return all such indices
         argmax_axis = 0 if span.vertical else 1
         output = np.argmax(values, axis=argmax_axis)
+        scores = 0
 
         correct_grid = np.zeros(self.float_grid.shape, dtype=np.uint8)
         incorrect_grid = np.zeros(self.float_grid.shape, dtype=np.uint8)
@@ -276,14 +282,16 @@ class AnswerSheet(AnswerSheetTemplate):
                 _col = span.top_left[1] + _value
             if span.answer_keys and (_value == span.answer_keys[_index]):
                 correct_grid[_row, _col] = 1
+                scores += self.max_score
             else:
                 incorrect_grid[_row, _col] = 1
+                scores += self.incorrect_score
         visualize_float_grid(self.highlight_filepath, correct_grid, self.highlight_filepath, color_bgr=(0, 127, 0))
         visualize_float_grid(self.highlight_filepath, incorrect_grid, self.highlight_filepath, color_bgr=(0, 0, 255))
 
-        return output.tolist()
+        return output.tolist(), scores
 
-    def extract_threshold(self, span: CellSpan, threshold: float = None) -> List[List[int]]:
+    def extract_threshold(self, span: CellSpan, threshold: float = None) -> Tuple[List[List[int]], int]:
         values = self.float_grid[span.top_left[0]: span.bot_right[0] + 1, span.top_left[1]: span.bot_right[1] + 1]
 
         if threshold is None:
@@ -293,11 +301,19 @@ class AnswerSheet(AnswerSheetTemplate):
         for row in values:
             indices.append([i for i, val in enumerate(row) if val >= threshold])
 
+        scores = 0
+
         correct_grid = np.zeros(self.float_grid.shape, dtype=np.uint8)
         incorrect_grid = np.zeros(self.float_grid.shape, dtype=np.uint8)
+        unanswered_grid = np.zeros(self.float_grid.shape, dtype=np.uint8)
         for _index, _values in enumerate(indices):
-            union_answer = set(_values + span.answer_keys[_index])
-            intersection_answer = set(_values).intersection(set(span.answer_keys[_index]))
+            _answered = set(_values)
+            _correct = set(span.answer_keys[_index])
+            union_answer = _answered.union(_correct)
+            intersection_answer = _answered.intersection(_correct)
+            answer_incorrectly = _answered - _correct
+            unanswered = _correct - _answered
+            scores += max(self.max_score - self.incorrect_score * (len(answer_incorrectly) + len(unanswered)), 0)
             for _value in union_answer:
                 if span.vertical:
                     _row = span.top_left[0] + _value
@@ -307,17 +323,21 @@ class AnswerSheet(AnswerSheetTemplate):
                     _col = span.top_left[1] + _value
                 if _value in intersection_answer:
                     correct_grid[_row, _col] = 1
-                else:
+                elif _value in answer_incorrectly:
                     incorrect_grid[_row, _col] = 1
+                elif _value in unanswered:
+                    unanswered_grid[_row, _col] = 1
         visualize_float_grid(self.highlight_filepath, correct_grid, self.highlight_filepath, color_bgr=(0, 127, 0))
         visualize_float_grid(self.highlight_filepath, incorrect_grid, self.highlight_filepath, color_bgr=(0, 0, 255))
-        return indices
+        visualize_float_grid(self.highlight_filepath, unanswered_grid, self.highlight_filepath, color_bgr=(0, 0, 255),
+                             thickness=2)
+        return indices, scores
 
     def extract_student_id(self) -> str:
         choices = self.extract_argmax(self.id_span)
         return "".join([str(_) for _ in choices])
 
-    def extract_choices(self, span: CellSpan, threshold=None) -> List[int] | List[List[int]]:
+    def extract_choices(self, span: CellSpan, threshold=None) -> Tuple[List[int] | List[List[int]], int]:
         match span.span_type:
             case "choose_any":
                 # for each row, return a list of indices of elt that >= threshold
@@ -325,7 +345,7 @@ class AnswerSheet(AnswerSheetTemplate):
             case "choose_one" | _:  # when all else fail, fallback to choose one
                 return self.extract_argmax(span)
 
-    def extract_all_answers(self, threshold=None) -> List[int | List[int]]:
+    def extract_all_answers(self, threshold=None) -> tuple[list[Any], int]:
         """
         extract all answers as one big List and set it to self.all_answers.
         for each elt:
@@ -335,6 +355,9 @@ class AnswerSheet(AnswerSheetTemplate):
         :return: self.all_answers
         """
         self.all_answers = []
+        self.all_scores = 0
         for answer_span in self.answer_spans:
-            self.all_answers += self.extract_choices(answer_span, threshold)
-        return self.all_answers
+            this_answer = self.extract_choices(answer_span, threshold)
+            self.all_answers += this_answer[0]
+            self.all_scores += this_answer[1]
+        return self.all_answers, self.all_scores

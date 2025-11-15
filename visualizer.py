@@ -8,7 +8,8 @@ import numpy as np
 def visualize_float_grid(image_path: str,
                          float_grid: np.ndarray,
                          output_filename: str,
-                         color_bgr: Tuple[int, int, int] = (0, 0, 255)):
+                         color_bgr: Tuple[int, int, int] = (0, 0, 255),
+                         thickness: int = -1):
     """
     Visualizes the float grid by coloring the corresponding cells in an image with transparent red.
 
@@ -17,6 +18,8 @@ def visualize_float_grid(image_path: str,
         float_grid: A 2D NumPy array of float values (0.0 to 1.0) or True/False.
         output_filename: The name of the output image file (will be saved in DEBUG_OUTPUT_DIR).
         color_bgr: the color to be painted in bgr
+        color_bgr:
+        thickness: the thickness of the border. -1 for filled rectangle
     """
     img = cv2.imread(image_path)
 
@@ -47,7 +50,9 @@ def visualize_float_grid(image_path: str,
 
             # Draw a solid red rectangle on the overlay
             # Fill from (x1+1, y1+1) to (x2-1, y2-1) to avoid overwriting grid lines.
-            cv2.rectangle(overlay, (x1 + 1, y1 + 1), (x2 - 1, y2 - 1), fill_color, -1)
+            cv2.rectangle(overlay,
+                          (x1 + 1 + thickness//2, y1 + 1 + thickness//2),
+                          (x2 - 1 - thickness//2, y2 - 1 - thickness//2), fill_color, thickness=thickness)
 
     # Blend the overlay with the original image
     # Use a constant alpha for the transparency of the red rectangles.
