@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from numpy import ndarray
 
-from constants import DEBUG_OUTPUT_DIR, DEFAULT_MARK_THRESHOLD
+from constants import DEBUG_OUTPUT_DIR, DEFAULT_MARK_THRESHOLD, GREEN, DARK_GREEN, RED
 from visualizer import visualize_float_grid
 
 
@@ -46,18 +46,44 @@ def apply_threshold(float_grid: np.ndarray, threshold: float) -> np.ndarray:
     return boolean_grid
 
 
+class Grading:
+    def __init__(self,
+                 choose_one_correct=1,
+                 choose_one_incorrect=0,
+                 choose_any_correct=1,
+                 choose_any_per_incorrect_choice=-0.2,
+                 choose_any_per_missing_choice=-0.2,
+                 min_score=0):
+        self.choose_one_correct = choose_one_correct
+        self.choose_one_incorrect = choose_one_incorrect
+        self.choose_any_correct = choose_any_correct
+        self.choose_any_per_incorrect_choice = choose_any_per_incorrect_choice
+        self.choose_any_per_missing_choice = choose_any_per_missing_choice
+        self.min_score = min_score
+
+    def get_choose_any_score(self, num_incorrect, num_missing):
+        return max((self.choose_any_correct +
+                    (num_incorrect * self.choose_any_per_incorrect_choice) +
+                    (num_missing * self.choose_any_per_missing_choice)), self.min_score)
+
+
 class CellSpan:
     def __init__(self,
                  top_left: Tuple[int, int],
                  bot_right: Tuple[int, int],
                  vertical: bool,
                  span_type: Literal["id", "choose_one", "choose_any"],
-                 answer_keys: List[int | List[int]] = None):
+                 answer_keys: List[int | List[int]] = None,
+                 grading: Grading = None):
         self.top_left = top_left
         self.bot_right = bot_right
         self.vertical = vertical
         self.span_type = span_type
         self.answer_keys = answer_keys
+        if grading:
+            self.grading = grading
+        else:
+            self.grading = Grading()
 
 
 class AnswerSheetTemplate:
@@ -65,15 +91,11 @@ class AnswerSheetTemplate:
                  grid_rows: int,
                  grid_cols: int,
                  id_span: CellSpan,
-                 answer_spans: List[CellSpan],
-                 correct_score: float = 1,
-                 incorrect_score: float = 0):
+                 answer_spans: List[CellSpan]):
         self.grid_rows = grid_rows
         self.grid_cols = grid_cols
         self.id_span = id_span
         self.answer_spans = answer_spans
-        self.max_score = correct_score
-        self.incorrect_score = incorrect_score
 
 
 class AnswerSheet(AnswerSheetTemplate):
@@ -89,7 +111,7 @@ class AnswerSheet(AnswerSheetTemplate):
 
         # raw stuff and param for processing it
         self.filepath = filepath
-        self.highlight_filepath = os.path.join(highlight_folder, os.path.basename(filepath))
+        self.output_path = os.path.join(highlight_folder, os.path.basename(filepath))
         self.new_cell_size = new_cell_size
         self.ignore_border_px = ignore_border_px
         self.mark_threshold = mark_threshold
@@ -108,7 +130,7 @@ class AnswerSheet(AnswerSheetTemplate):
     def process(self):
         self.raw_img = cv2.imread(self.filepath, cv2.IMREAD_GRAYSCALE)
         self.aligned_img = self.align_image()
-        cv2.imwrite(self.highlight_filepath, self.aligned_img)  # make aligned ver. as a base highlighted version
+        cv2.imwrite(self.output_path, self.aligned_img)  # make aligned ver. as a base highlighted version
         self.float_grid = self.analyze_grid(self.ignore_border_px)
 
         self.student_id = self.extract_student_id()
@@ -186,7 +208,6 @@ class AnswerSheet(AnswerSheetTemplate):
 
             # Apply the matrix to the *original grayscale image*
             self.aligned_img = cv2.warpPerspective(self.raw_img, _m, (self.new_width, self.new_height))
-            print("warped", self.raw_img.shape, self.aligned_img.shape, self.new_height, self.new_width)
             return self.aligned_img
         else:
             print(f"Error: Found contour with {len(approx)} points, not 4. Cannot align.")
@@ -240,9 +261,9 @@ class AnswerSheet(AnswerSheetTemplate):
 
                 # Draw grid lines on the debug image
                 # Draw horizontal lines
-                cv2.line(grid_debug_image, (x1, y1), (x2, y1), (0, 255, 0), 1)  # Green line
+                cv2.line(grid_debug_image, (x1, y1), (x2, y1), GREEN, 1)  # Green line
                 # Draw vertical lines
-                cv2.line(grid_debug_image, (x1, y1), (x1, y2), (0, 255, 0), 1)  # Green line
+                cv2.line(grid_debug_image, (x1, y1), (x1, y2), GREEN, 1)  # Green line
 
         # Draw the rightmost and bottommost lines to complete the grid
         cv2.line(
@@ -282,14 +303,13 @@ class AnswerSheet(AnswerSheetTemplate):
                 _col = span.top_left[1] + _value
             if span.answer_keys and (_value == span.answer_keys[_index]):
                 correct_grid[_row, _col] = 1
-                scores += self.max_score
+                scores += span.grading.choose_one_correct
             else:
                 incorrect_grid[_row, _col] = 1
-                scores += self.incorrect_score
-        visualize_float_grid(self.highlight_filepath, correct_grid, self.highlight_filepath, color_bgr=(0, 127, 0))
-        visualize_float_grid(self.highlight_filepath, incorrect_grid, self.highlight_filepath, color_bgr=(0, 0, 255))
-
-        return output.tolist(), scores
+                scores += span.grading.choose_one_incorrect
+        visualize_float_grid(self.output_path, correct_grid, self.output_path, color_bgr=DARK_GREEN)
+        visualize_float_grid(self.output_path, incorrect_grid, self.output_path, color_bgr=RED)
+        return output.tolist(), round(scores, 2)
 
     def extract_threshold(self, span: CellSpan, threshold: float = None) -> Tuple[List[List[int]], int]:
         values = self.float_grid[span.top_left[0]: span.bot_right[0] + 1, span.top_left[1]: span.bot_right[1] + 1]
@@ -310,10 +330,10 @@ class AnswerSheet(AnswerSheetTemplate):
             _answered = set(_values)
             _correct = set(span.answer_keys[_index])
             union_answer = _answered.union(_correct)
-            intersection_answer = _answered.intersection(_correct)
-            answer_incorrectly = _answered - _correct
+            intersect_answer = _answered.intersection(_correct)
+            incorrect = _answered - _correct
             unanswered = _correct - _answered
-            scores += max(self.max_score - self.incorrect_score * (len(answer_incorrectly) + len(unanswered)), 0)
+            scores += span.grading.get_choose_any_score(len(incorrect), len(unanswered))
             for _value in union_answer:
                 if span.vertical:
                     _row = span.top_left[0] + _value
@@ -321,20 +341,19 @@ class AnswerSheet(AnswerSheetTemplate):
                 else:
                     _row = span.top_left[0] + _index
                     _col = span.top_left[1] + _value
-                if _value in intersection_answer:
+                if _value in intersect_answer:
                     correct_grid[_row, _col] = 1
-                elif _value in answer_incorrectly:
+                elif _value in incorrect:
                     incorrect_grid[_row, _col] = 1
                 elif _value in unanswered:
                     unanswered_grid[_row, _col] = 1
-        visualize_float_grid(self.highlight_filepath, correct_grid, self.highlight_filepath, color_bgr=(0, 127, 0))
-        visualize_float_grid(self.highlight_filepath, incorrect_grid, self.highlight_filepath, color_bgr=(0, 0, 255))
-        visualize_float_grid(self.highlight_filepath, unanswered_grid, self.highlight_filepath, color_bgr=(0, 0, 255),
-                             thickness=2)
-        return indices, scores
+        visualize_float_grid(self.output_path, correct_grid, self.output_path, color_bgr=DARK_GREEN)
+        visualize_float_grid(self.output_path, incorrect_grid, self.output_path, color_bgr=RED)
+        visualize_float_grid(self.output_path, unanswered_grid, self.output_path, color_bgr=RED, thickness=2)
+        return indices, round(scores, 2)
 
     def extract_student_id(self) -> str:
-        choices = self.extract_argmax(self.id_span)
+        choices = self.extract_argmax(self.id_span)[0]
         return "".join([str(_) for _ in choices])
 
     def extract_choices(self, span: CellSpan, threshold=None) -> Tuple[List[int] | List[List[int]], int]:
@@ -360,4 +379,5 @@ class AnswerSheet(AnswerSheetTemplate):
             this_answer = self.extract_choices(answer_span, threshold)
             self.all_answers += this_answer[0]
             self.all_scores += this_answer[1]
+        self.all_scores = round(self.all_scores, 2)
         return self.all_answers, self.all_scores
