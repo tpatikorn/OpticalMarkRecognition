@@ -1,10 +1,9 @@
 import os
 
 from constants import *
-from omr import AnswerSheet, AnswerSheetTemplate, Grading
+from omr import AnswerSheet, AnswerSheetTemplate
 from omr import CellSpan
 from omr_util import extract_images_from_folder
-from visualizer import visualize_float_grid
 
 # Process the PDF
 # omr_results = process_omr(PDF_FILE, mark_threshold=0.1)

@@ -1,4 +1,5 @@
 import os
+
 import cv2
 import fitz
 import numpy as np
@@ -27,6 +28,7 @@ def extract_images_from_folder(raw_folder: str, output_folder: str):
             base_filename = os.path.splitext(filename)[0]
             cv2.imwrite(os.path.join(output_folder, f"{base_filename}_{_index:02}.jpg"), img)
 
+
 def pdf_to_images(filepath):
     images = []
     doc = fitz.open(filepath)
@@ -36,6 +38,7 @@ def pdf_to_images(filepath):
         images.append(pdf_page_to_image(page))
     doc.close()
     return images
+
 
 def pdf_page_to_image(page: fitz.Page) -> np.ndarray:
     """
