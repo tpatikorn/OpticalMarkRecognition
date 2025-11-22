@@ -2,3 +2,6 @@
 images
 pages
 debug_output
+uploads
+.streamlit/secrets.toml
+.env

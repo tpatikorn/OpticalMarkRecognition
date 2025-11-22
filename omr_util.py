@@ -15,6 +15,7 @@ def extract_images_from_folder(raw_folder: str, output_folder: str):
     :param raw_folder: input folder path
     :param output_folder: output folder path
     """
+    print("===========extract_images_from_folder raw_folder", raw_folder)
     for filename in os.listdir(raw_folder):
         filepath = os.path.join(raw_folder, filename)
         print(f"Starting OMR processing for: {filepath}")

@@ -66,13 +66,27 @@ class Grading:
                     (num_incorrect * self.choose_any_per_incorrect_choice) +
                     (num_missing * self.choose_any_per_missing_choice)), self.min_score)
 
+    @staticmethod
+    def from_dict(grading_dict: dict):
+        return Grading(**grading_dict) if grading_dict else Grading()
+
+    def to_dict(self):
+        return {
+            "choose_one_correct": self.choose_one_correct,
+            "choose_one_incorrect": self.choose_one_incorrect,
+            "choose_any_correct": self.choose_any_correct,
+            "choose_any_per_incorrect_choice": self.choose_any_per_incorrect_choice,
+            "choose_any_per_missing_choice": self.choose_any_per_missing_choice,
+            "min_score": self.min_score,
+        }
+
 
 class CellSpan:
     def __init__(self,
                  top_left: Tuple[int, int],
                  bot_right: Tuple[int, int],
-                 vertical: bool,
-                 span_type: Literal["id", "choose_one", "choose_any"],
+                 vertical: bool = False,
+                 span_type: Literal["id", "choose_one", "choose_any"] = "choose_one",
                  answer_keys: List[int | List[int]] = None,
                  grading: Grading = None):
         self.top_left = top_left
@@ -84,6 +98,24 @@ class CellSpan:
             self.grading = grading
         else:
             self.grading = Grading()
+
+    @staticmethod
+    def from_dict(cell_span_dict: dict):
+        if "top_left" in cell_span_dict and "bot_right" in cell_span_dict:
+            cell_span_dict["grading"] = Grading.from_dict(cell_span_dict["grading"])
+            return CellSpan(**cell_span_dict)
+        else:
+            raise KeyError("cell_span_dict must contain 'top_left' and 'bot_right'")
+
+    def to_dict(self):
+        return {
+            "top_left": self.top_left,
+            "bot_right": self.bot_right,
+            "vertical": self.vertical,
+            "span_type": self.span_type,
+            "answer_keys": self.answer_keys,
+            "grading": self.grading.to_dict(),
+        }
 
 
 class AnswerSheetTemplate:
@@ -97,11 +129,31 @@ class AnswerSheetTemplate:
         self.id_span = id_span
         self.answer_spans = answer_spans
 
+    @staticmethod
+    def from_dict(template_dict: dict):
+        if ("grid_rows" in template_dict) and \
+                ("grid_cols" in template_dict) and \
+                ("id_span" in template_dict) and \
+                ("answer_spans" in template_dict):
+            template_dict["id_span"] = CellSpan.from_dict(template_dict["id_span"])
+            template_dict["answer_spans"] = [CellSpan.from_dict(_) for _ in template_dict["answer_spans"]]
+            return AnswerSheetTemplate(**template_dict)
+        else:
+            raise KeyError("template_dict must contain 'grid_rows', 'grid_cols', 'id_span', and 'answer_spans'")
+
+    def to_dict(self):
+        return {
+            "grid_rows": self.grid_rows,
+            "grid_cols": self.grid_cols,
+            "id_span": self.id_span.to_dict(),
+            "answer_spans": [_.to_dict() for _ in self.answer_spans],
+        }
+
 
 class AnswerSheet(AnswerSheetTemplate):
     def __init__(self, filepath: str,
                  template: AnswerSheetTemplate,
-                 highlight_folder=DEBUG_OUTPUT_DIR,
+                 highlight_folder=None,
                  new_cell_size: int = 20,
                  ignore_border_px: int = 4,
                  mark_threshold: float = 0.1):
@@ -111,6 +163,8 @@ class AnswerSheet(AnswerSheetTemplate):
 
         # raw stuff and param for processing it
         self.filepath = filepath
+        if highlight_folder is None:
+            highlight_folder = DEBUG_OUTPUT_DIR
         self.output_path = os.path.join(highlight_folder, os.path.basename(filepath))
         self.new_cell_size = new_cell_size
         self.ignore_border_px = ignore_border_px
