@@ -27,7 +27,7 @@ def extract_images_from_folder(raw_folder: str, output_folder: str):
             images = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)]
         for _index, img in enumerate(images):
             base_filename = os.path.splitext(filename)[0]
-            cv2.imwrite(os.path.join(output_folder, f"{base_filename}_{_index:02}.jpg"), img)
+            cv2.imwrite(os.path.join(output_folder, f"{base_filename}_{_index+1:02}.jpg"), img)
 
 
 def pdf_to_images(filepath):

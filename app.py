@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 import os
 import json
+import shutil
 from datetime import datetime
 
+# We assume these files (main.py, omr.py, omr_util.py) exist in the same directory
 from main import sheet_template, grade_these
 from omr import AnswerSheetTemplate
 from omr_util import extract_images_from_folder
 
 # ==========================================
-# 0. CONFIG & MOCK FUNCTIONS (REPLACE THESE)
+# 0. CONFIG & SETUP
 # ==========================================
 
 st.set_page_config(page_title="OMR Grader", layout="wide")
@@ -36,6 +38,7 @@ if st.sidebar.button("Logout"):
 # 2. SIDEBAR: NAMESPACE MANAGEMENT
 # ==========================================
 
+# Updated to your specific path
 BASE_UPLOAD_DIR = "C:/Users/Lenovo/PycharmProjects/OpticalMarkRecognition/uploads"
 
 # Ensure base user dir exists
@@ -75,7 +78,8 @@ st.title(f"Correction Dashboard: {selected_namespace}")
 # 3. TABS UI IMPLEMENTATION
 # ==========================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["1. Configuration", "2. Upload & Process", "3. Grading", "4. Review & Export"])
+# Combined Tab 3 and 4 into "Grading & Review"
+tab1, tab2, tab3 = st.tabs(["1. Configuration", "2. Upload & Process", "3. Grading & Review"])
 
 # --- TAB 1: CONFIGURATION (Roster & Template) ---
 with tab1:
@@ -85,6 +89,7 @@ with tab1:
         st.subheader("Answer Sheet Template")
         # Load existing or default
         template_path = os.path.join(NS_DIR, "template.json")
+        # Using your sheet_template from main
         default_template = json.dumps(sheet_template.to_dict())
 
         if os.path.exists(template_path):
@@ -131,168 +136,330 @@ with tab1:
 
 # --- TAB 2: UPLOAD & PROCESS ---
 with tab2:
-    st.subheader("Upload Scans (PDF or Images)")
-    uploaded_files = st.file_uploader("Drop files here", accept_multiple_files=True, type=['pdf', 'png', 'jpg', 'jpeg'])
+    col_up, col_man = st.columns([2, 1])
 
-    if uploaded_files:
-        if st.button(f"Save {len(uploaded_files)} files to Raw"):
-            for u_file in uploaded_files:
-                with open(os.path.join(RAW_DIR, u_file.name), "wb") as f:
-                    f.write(u_file.getbuffer())
-            st.success("Files saved to Raw folder.")
+    with col_up:
+        st.subheader("Upload Scans")
+        uploaded_files = st.file_uploader("Drop files here", accept_multiple_files=True,
+                                          type=['pdf', 'png', 'jpg', 'jpeg'])
+
+        if uploaded_files:
+            if st.button(f"Save {len(uploaded_files)} files to Raw"):
+                for u_file in uploaded_files:
+                    with open(os.path.join(RAW_DIR, u_file.name), "wb") as f:
+                        f.write(u_file.getbuffer())
+                st.success("Files saved to Raw folder.")
+                st.rerun()
+
+    with col_man:
+        st.subheader("Manage Files")
+        # 1. Raw Files Management
+        raw_files = os.listdir(RAW_DIR)
+        with st.expander(f"Raw Files ({len(raw_files)})", expanded=False):
+            if len(raw_files) == 0:
+                st.caption("No files.")
+            else:
+                for f in raw_files:
+                    c1, c2 = st.columns([4, 1])
+                    c1.write(f)
+                    if c2.button("🗑️", key=f"del_raw_{f}"):
+                        os.remove(os.path.join(RAW_DIR, f))
+                        st.rerun()
+
+        # 2. Processed Pages Management
+        pages_files = os.listdir(PAGES_DIR)
+        with st.expander(f"Extracted Pages ({len(pages_files)})", expanded=False):
+            if len(pages_files) == 0:
+                st.caption("No pages.")
+            else:
+                # Option to clear all pages
+                if st.button("Clear All Pages"):
+                    for p in pages_files:
+                        os.remove(os.path.join(PAGES_DIR, p))
+                    st.rerun()
+
+                for p in pages_files:
+                    c1, c2 = st.columns([4, 1])
+                    c1.write(p)
+                    if c2.button("🗑️", key=f"del_page_{p}"):
+                        os.remove(os.path.join(PAGES_DIR, p))
+                        st.rerun()
 
     st.divider()
 
-    # Check Raw Folder
-    raw_files = os.listdir(RAW_DIR)
-    st.write(f"Files in Raw Queue: **{len(raw_files)}**")
-
-    if st.button("⚙️ Process These (Extract Pages)"):
+    if st.button("⚙️ Process Raw Files (Extract Pages)", type="primary"):
         with st.spinner("Extracting pages..."):
-            # CALL YOUR FUNCTION HERE
+            # Calling real function from omr_util
             count = extract_images_from_folder(raw_folder=RAW_DIR, output_folder=PAGES_DIR)
             st.success(f"Extraction complete! {count} pages ready.")
             st.session_state['extraction_done'] = True
+            st.rerun()
 
     # Show Previews if extraction done
-    pages_files = os.listdir(PAGES_DIR)
     if len(pages_files) > 0:
-        st.write(f"### Extracted Pages ({len(pages_files)})")
-        with st.expander("View Page Previews"):
-            cols = st.columns(4)
-            for i, img_file in enumerate(pages_files[:8]):  # Show first 8 only to save memory
-                cols[i % 4].image(os.path.join(PAGES_DIR, img_file), caption=img_file)
-            if len(pages_files) > 8:
-                st.write("...and more.")
+        st.write(f"### Extracted Pages Preview")
+        cols = st.columns(4)
+        for i, img_file in enumerate(pages_files[:8]):  # Show first 8 only
+            cols[i % 4].image(os.path.join(PAGES_DIR, img_file), caption=img_file)
 
-# --- TAB 3: GRADING ---
+# --- TAB 3: GRADING & REVIEW (COMBINED) ---
 with tab3:
-    st.subheader("Grading Execution")
+    st.subheader("1. Grading Execution")
 
-    if st.button("📝 Grade These"):
-        if not os.path.exists(os.path.join(NS_DIR, "template.json")):
-            st.error("Please save an AnswerSheetTemplate in Tab 1 first.")
+    col_action, col_status = st.columns([1, 3])
+    with col_action:
+        if st.button("📝 Run Grading", type="primary", use_container_width=True):
+            if not os.path.exists(os.path.join(NS_DIR, "template.json")):
+                st.error("Please save an AnswerSheetTemplate in Tab 1 first.")
+            else:
+                with st.spinner("Grading in progress..."):
+                    # Calling real grading function
+                    results = grade_these(AnswerSheetTemplate.from_dict(json.loads(current_template)),
+                                          PAGES_DIR, highlight_folder=GRADED_DIR)
+                    st.session_state['grading_results'] = results
+                    # Clear overrides when re-grading to avoid stale data
+                    st.session_state['manual_overrides'] = {}
+                    st.success("Grading Complete!")
+                    st.rerun()
+
+    with col_status:
+        if 'grading_results' in st.session_state:
+            st.info(f"Last graded: {len(st.session_state['grading_results'])} pages processed.")
         else:
-            with st.spinner("Grading..."):
-                # CALL YOUR FUNCTION HERE
-                results = grade_these(AnswerSheetTemplate.from_dict(json.loads(current_template)),
-                                      PAGES_DIR, highlight_folder=GRADED_DIR)
-                st.session_state['grading_results'] = results
-                st.success("Grading Complete!")
+            st.warning("No results yet.")
 
-    # Display raw results if available
+    st.divider()
+
+    # --- REVIEW SECTION ---
     if 'grading_results' in st.session_state:
-        st.write("Grading finished. Go to **Tab 4** to review and finalize.")
-        st.json(st.session_state['grading_results'][0])  # Show sample
+        st.subheader("2. Results Review")
 
-# --- TAB 4: REVIEW & RESULTS (The UI Logic you asked for) ---
-with tab4:
-    if 'grading_results' not in st.session_state:
-        st.info("No grading results yet. Run grading in Tab 3.")
-    else:
         results = st.session_state['grading_results']
+
+        # Convert results objects to DataFrame
         result_columns = ["filepath", "output_path", "student_id", "all_scores"]
         result_dicts = []
         for _result in results:
             result_dicts.append(dict([(_k, _v) for _k, _v in vars(_result).items() if _k in result_columns]))
 
-        # Convert results to DataFrame for easier manipulation
         res_df = pd.DataFrame(result_dicts)
-        res_df["filename"] = res_df.filepath.apply(os.path.basename)
 
-        # Merge with Roster to get Names
-        # We assume 'student_id' matches
-        full_df = pd.merge(res_df, roster_df, on='student_id', how='left')
+        if not res_df.empty:
+            res_df["filename"] = res_df.filepath.apply(os.path.basename)
 
-        # Calculate valid students for dropdown (Students who don't have a score yet)
-        # In a real app, you might want to allow overwriting, but let's filter for now
-        assigned_ids = full_df['student_id'].unique()
-        available_students = roster_df[~roster_df['student_id'].isin(assigned_ids)]
+            # Ensure overrides dictionary exists
+            if 'manual_overrides' not in st.session_state:
+                st.session_state['manual_overrides'] = {}
 
-        # Create options list for dropdown: "ID - Name"
-        student_options = available_students.apply(
-            lambda x: f"{x['student_id']} - {x['student_firstname']} {x['student_lastname']}", axis=1).tolist()
-        student_options.insert(0, "Select Student...")
-        student_options.append("DISCARD IMAGE")
 
-        st.subheader("Class Overview")
+            # --- PRE-PROCESSING FOR LOGIC AND SORTING ---
+            # We create a temporary 'effective' dataframe that includes the manual overrides
+            # This allows us to sort duplicates together properly even if one was manually fixed
 
-        # Summary Metrics
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Scanned", len(full_df))
-        c2.metric("Matched Students", full_df['student_firstname'].notna().sum())
-        c3.metric("Unknown/Errors", full_df['student_firstname'].isna().sum())
+            def get_effective_id(row):
+                override = st.session_state['manual_overrides'].get(row['filename'])
+                if override == "DISCARD IMAGE":
+                    return "DISCARDED"
+                elif override:
+                    return override.split(" - ")[0]
+                return row['student_id']
 
-        st.divider()
 
-        # --- THE REVIEW UI ---
-        st.write("### 🔍 Detailed Review")
-        st.info("Review entries with 'UNKNOWN' ID or low confidence.")
+            res_df['effective_id'] = res_df.apply(get_effective_id, axis=1)
 
-        # Iterate through results to create a custom row for each
-        # We use session_state to track manual overrides
-        if 'manual_overrides' not in st.session_state:
-            st.session_state['manual_overrides'] = {}
+            # Filter out discarded for stats (but maybe keep in list to allow undoing?)
+            # Let's keep them in list but mark them.
 
-        for index, row in full_df.iterrows():
-            # Determine if this row needs attention
-            is_error = row['student_id'] == "UNKNOWN" or pd.isna(row['student_firstname'])
+            # Merge with Roster using EFFECTIVE ID
+            # Rename roster cols to avoid collision if necessary, though simple merge is fine here
+            # We merge on effective_id against roster's student_id
+            full_df = pd.merge(res_df, roster_df, left_on='effective_id', right_on='student_id', how='left',
+                               suffixes=('', '_roster'))
 
-            # Visual container
-            with st.container(border=True):
-                c_img, c_info, c_action = st.columns([1, 2, 2])
+            # Fill NaN firstnames for Unknown/Discarded
+            full_df['student_firstname'] = full_df['student_firstname'].fillna("-")
+            full_df['student_lastname'] = full_df['student_lastname'].fillna("-")
 
-                with c_img:
-                    # Thumbnail that expands
-                    st.image(row['output_path'], width=100)
-                    with st.popover("🔍 Zoom"):
-                        st.image(row['output_path'])
+            # Detect Duplicates (on Effective ID), ignoring UNKNOWN/DISCARDED
+            ids_series = full_df['effective_id']
+            duplicate_mask = ids_series.duplicated(keep=False) & (~ids_series.isin(["UNKNOWN", "DISCARDED"]))
+            full_df['is_duplicate'] = duplicate_mask
 
-                with c_info:
-                    if is_error:
-                        st.error(f"❌ ID: {row['student_id']}")
-                    else:
-                        st.success(f"✅ {row['student_firstname']} {row['student_lastname']}")
-                    st.write(f"**Score:** {row['all_scores']}")
-                    st.caption(f"File: {row['filename']}")
+            # Identify Errors (Unknowns or No Roster Match)
+            # Note: A valid ID not in roster will have NaNs for names
+            full_df['is_unknown'] = full_df['effective_id'] == "UNKNOWN"
+            full_df['missing_roster'] = (full_df['effective_id'] != "UNKNOWN") & (
+                        full_df['effective_id'] != "DISCARDED") & (full_df['student_firstname'] == "-")
 
-                with c_action:
-                    # If it's an error or collision, show dropdown
-                    if is_error:
-                        # Check if we already fixed it in this session
-                        current_override = st.session_state['manual_overrides'].get(row['filename'])
+            # --- CALCULATE AVAILABLE STUDENTS FOR DROPDOWN ---
+            # IDs that are currently "occupied" in the full list (excluding discarded/unknown)
+            taken_ids = set(full_df[~full_df['effective_id'].isin(["UNKNOWN", "DISCARDED"])]['effective_id'].unique())
 
-                        val = st.selectbox(
-                            "Assign to:",
-                            options=student_options,
-                            key=f"fix_{index}",
-                            index=0 if not current_override else student_options.index(
-                                current_override) if current_override in student_options else 0
+            # Metrics
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Pages", len(full_df))
+            c2.metric("Matched", (~full_df['is_unknown'] & ~full_df['missing_roster'] & ~full_df['is_duplicate'] & (
+                        full_df['effective_id'] != "DISCARDED")).sum())
+            c3.metric("Duplicates", full_df['is_duplicate'].sum())
+            c4.metric("Unknown/Missing", (full_df['is_unknown'] | full_df['missing_roster']).sum())
+
+            st.write("### 🔍 Detailed Review")
+
+
+            # --- SORTING ---
+            # Priority:
+            # 0: Unknowns/Missing Roster (Errors)
+            # 1: Duplicates (Warnings) -> So they stay together
+            # 2: Normal (Success)
+            # 3: Discarded
+
+            def get_sort_priority(row):
+                if row['effective_id'] == "DISCARDED": return 3
+                if row['is_unknown'] or row['missing_roster']: return 0
+                if row['is_duplicate']: return 1
+                return 2
+
+
+            full_df['sort_prio'] = full_df.apply(get_sort_priority, axis=1)
+
+            # Sort by Priority, then by Effective ID (to group duplicates), then by Filename
+            full_df = full_df.sort_values(by=['sort_prio', 'effective_id', 'filename'], ascending=[True, True, True])
+
+            # --- RENDER LOOP ---
+            for index, row in full_df.iterrows():
+
+                # Setup display variables
+                e_id = row['effective_id']
+                e_name = f"{row['student_firstname']} {row['student_lastname']}"
+                if e_id == "DISCARDED": e_name = "Discarded Image"
+
+                # Determine Border Color / Status
+                # Streamlit containers don't support color borders natively yet, but we use status elements
+
+                with st.container(border=True):
+                    c_img, c_details = st.columns([1, 4])
+
+                    with c_img:
+                        if os.path.exists(row['output_path']):
+                            st.image(row['output_path'])
+                            with st.popover("🔍 Zoom"):
+                                st.image(row['output_path'])
+                        else:
+                            st.warning("Img Missing")
+
+                    with c_details:
+                        # --- ROW 1: STATUS | NAME | FILENAME ---
+                        r1_c1, r1_c2, r1_c3 = st.columns([2, 3, 2])
+
+                        with r1_c1:
+                            if e_id == "DISCARDED":
+                                st.caption("🗑️ IGNORED")
+                            elif row['is_unknown']:
+                                st.error("❌ UNKNOWN ID")
+                            elif row['missing_roster']:
+                                st.warning("⚠️ NOT IN ROSTER")
+                            elif row['is_duplicate']:
+                                st.error("👯 DUPLICATE ID")
+                            else:
+                                st.success("✅ MATCHED")
+
+                        with r1_c2:
+                            if e_id != "DISCARDED" and e_id != "UNKNOWN":
+                                st.markdown(f"**{e_name}**")
+                            else:
+                                st.markdown("---")
+
+                        with r1_c3:
+                            st.caption(f"📄 {row['filename']}")
+
+                        # --- ROW 2: ID | SCORE ---
+                        r2_c1, r2_c2 = st.columns([2, 5])
+                        with r2_c1:
+                            st.markdown(f"🆔 **{e_id}**")
+                        with r2_c2:
+                            st.markdown(f"📊 Score: **{row['all_scores']}**")
+
+                        # --- ROW 3: OVERRIDE DROPDOWN ---
+                        # Logic: Available = (All Roster - Taken IDs) + (Current ID if valid)
+
+                        # 1. Base Available
+                        available_roster = roster_df[~roster_df['student_id'].isin(taken_ids)]
+
+                        # 2. Build Options List
+                        options = available_roster.apply(
+                            lambda x: f"{x['student_id']} - {x['student_firstname']} {x['student_lastname']}",
+                            axis=1).tolist()
+
+                        # 3. Add Current ID back to options if it exists in roster (so it shows as selected)
+                        if e_id not in ["UNKNOWN", "DISCARDED"]:
+                            # It might be marked as duplicate or taken, so we force add it
+                            # Find name in roster (we use the original roster df for this lookup)
+                            curr_rec = roster_df[roster_df['student_id'] == e_id]
+                            if not curr_rec.empty:
+                                curr_str = f"{curr_rec.iloc[0]['student_id']} - {curr_rec.iloc[0]['student_firstname']} {curr_rec.iloc[0]['student_lastname']}"
+                                if curr_str not in options:
+                                    options.insert(0, curr_str)
+
+                        options.sort()
+                        options.insert(0, "Select Student...")
+                        options.append("DISCARD IMAGE")
+
+                        # Determine current selection index
+                        current_val_str = "Select Student..."
+                        if e_id == "DISCARDED":
+                            current_val_str = "DISCARD IMAGE"
+                        elif e_id != "UNKNOWN" and not row['missing_roster']:
+                            # Try to match the string format
+                            match = [o for o in options if o.startswith(f"{e_id} -")]
+                            if match: current_val_str = match[0]
+
+                        sel_index = 0
+                        if current_val_str in options:
+                            sel_index = options.index(current_val_str)
+
+                        # Render Selectbox
+                        new_val = st.selectbox(
+                            "Override / Fix:",
+                            options=options,
+                            key=f"fix_{row['filename']}",
+                            index=sel_index,
+                            label_visibility="collapsed"  # Cleaner look since we know what it is
                         )
 
-                        if val != "Select Student...":
-                            st.session_state['manual_overrides'][row['filename']] = val
-                            st.write(f"⚠️ Marked as: **{val}**")
+                        # Update State
+                        current_override = st.session_state['manual_overrides'].get(row['filename'])
+                        # We only update if it changed from what the SELECTBOX thinks it is vs what Logic thinks
+                        # Actually, comparing new_val to current_val_str is safer
+                        if new_val != current_val_str:
+                            st.session_state['manual_overrides'][row['filename']] = new_val
+                            st.rerun()
 
-        # Export Button
-        if st.button("💾 Save Final Grades to CSV"):
-            # Logic to merge manual overrides into the final dataframe
-            final_export = full_df.copy()
+            st.divider()
+            st.subheader("3. Export")
 
-            for filename, correction in st.session_state['manual_overrides'].items():
-                if correction == "DISCARD IMAGE":
-                    final_export = final_export[final_export['filename'] != filename]
-                else:
-                    # Extract ID from "123 - John Doe"
-                    new_id = correction.split(" - ")[0]
-                    # Update the row
-                    mask = final_export['filename'] == filename
-                    final_export.loc[mask, 'student_id'] = new_id
+            # --- EXPORT PREPARATION ---
+            # Filter out discards
+            final_export = full_df[full_df['effective_id'] != "DISCARDED"].copy()
 
-            # Re-merge to get names for corrected IDs
-            # (Simplification for demo: In production, you'd re-map the names properly)
+            # Clean columns
+            # We want effective_id to be the student_id in CSV
+            final_export['student_id'] = final_export['effective_id']
 
-            save_path = os.path.join(GRADED_DIR, f"final_grades_{datetime.now().strftime('%Y%m%d_%H%M')}.csv")
-            final_export.to_csv(save_path, index=False)
-            st.success(f"Exported to {save_path}")
-            st.dataframe(final_export)
+            export_columns = ['student_id', 'student_firstname', 'student_lastname', 'all_scores', 'filename']
+            # Keep only existing columns
+            final_cols = [c for c in export_columns if c in final_export.columns]
+            final_csv = final_export[final_cols].to_csv(index=False).encode('utf-8')
+
+            st.download_button(
+                label="💾 Download Graded CSV",
+                data=final_csv,
+                file_name=f"grades_{selected_namespace}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                type="primary"
+            )
+
+            with st.expander("Preview Final Data"):
+                st.dataframe(final_export[final_cols])
+
+        else:
+            st.warning("No results parsed successfully.")
